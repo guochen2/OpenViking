@@ -68,28 +68,28 @@ def register_default_tools(
     provider_api_base = agent_config.api_base if agent_config else None
     gen_image_model = agent_config.gen_image_model
     # File tools
-    registry.register(ReadFileTool())
-    registry.register(WriteFileTool())
-    registry.register(EditFileTool())
-    registry.register(ListDirTool())
+    # registry.register(ReadFileTool())
+    # registry.register(WriteFileTool())
+    # registry.register(EditFileTool())
+    # registry.register(ListDirTool())
 
-    # Shell tool
-    registry.register(
-        ExecTool(
-            timeout=exec_config.timeout,
-        )
-    )
+    # # Shell tool
+    # registry.register(
+    #     ExecTool(
+    #         timeout=exec_config.timeout,
+    #     )
+    # )
 
     # Web tools
-    registry.register(
-        WebSearchTool(
-            backend="auto",
-            brave_api_key=brave_api_key,
-            exa_api_key=exa_api_key,
-            tavily_api_key=tavily_api_key,
-        )
-    )
-    registry.register(WebFetchTool())
+    # registry.register(
+    #     WebSearchTool(
+    #         backend="auto",
+    #         brave_api_key=brave_api_key,
+    #         exa_api_key=exa_api_key,
+    #         tavily_api_key=tavily_api_key,
+    #     )
+    # )
+    # registry.register(WebFetchTool())
 
     # Open Viking tools
     if include_viking_tools:
@@ -99,35 +99,35 @@ def register_default_tools(
         registry.register(VikingGrepTool())
         registry.register(VikingGlobTool())
         registry.register(VikingMemoryCommitTool())
-        if not config.read_only:
-            registry.register(VikingAddResourceTool())
+        # if not config.read_only:
+        #     registry.register(VikingAddResourceTool())
 
     # Image generation tool
-    if include_image_tool:
-        registry.register(
-            ImageGenerationTool(
-                gen_image_model=gen_image_model,
-                api_key=provider_api_key,
-                api_base=provider_api_base,
-                send_callback=send_callback,
-            )
-        )
+    # if include_image_tool:
+    #     registry.register(
+    #         ImageGenerationTool(
+    #             gen_image_model=gen_image_model,
+    #             api_key=provider_api_key,
+    #             api_base=provider_api_base,
+    #             send_callback=send_callback,
+    #         )
+    #     )
 
     # Message tool
-    if include_message_tool and send_callback:
-        message_tool = MessageTool(send_callback=send_callback)
-        registry.register(message_tool)
+    # if include_message_tool and send_callback:
+    #     message_tool = MessageTool(send_callback=send_callback)
+    #     registry.register(message_tool)
 
     # Spawn tool
-    if include_spawn_tool and subagent_manager:
-        from vikingbot.agent.tools.spawn import SpawnTool
+    # if include_spawn_tool and subagent_manager:
+    #     from vikingbot.agent.tools.spawn import SpawnTool
 
-        spawn_tool = SpawnTool(manager=subagent_manager)
-        registry.register(spawn_tool)
+    #     spawn_tool = SpawnTool(manager=subagent_manager)
+    #     registry.register(spawn_tool)
 
     # Cron tool
-    if include_cron_tool and cron_service:
-        registry.register(CronTool(cron_service))
+    # if include_cron_tool and cron_service:
+    #     registry.register(CronTool(cron_service))
 
 
 def register_subagent_tools(
