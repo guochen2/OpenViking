@@ -33,5 +33,19 @@ export default defineRouter((/* { store, ssrContext } */) => {
     history: createHistory(process.env.VUE_ROUTER_BASE),
   });
 
+  Router.beforeEach((to) => {
+    const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
+    const authRaw = localStorage.getItem('miaosales_auth');
+    const isLoggedIn = !!authRaw;
+
+    if (requiresAuth && !isLoggedIn) {
+      return '/login';
+    }
+    if (to.path === '/login' && isLoggedIn) {
+      return '/chat';
+    }
+    return true;
+  });
+
   return Router;
 });

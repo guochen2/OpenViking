@@ -15,7 +15,7 @@ export default defineConfig((ctx) => {
     boot: ['i18n'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
-    css: ['app.scss'],
+    css: ['app.scss', 'markdown.scss'],
 
     // https://github.com/quasarframework/quasar/tree/dev/extras
     extras: [
@@ -40,6 +40,8 @@ export default defineConfig((ctx) => {
       env: {
         // 全局可用
         APP_VERSION: pkg.version,
+        VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? '',
+        VITE_AUTH_KEY: process.env.VITE_AUTH_KEY ?? 'dev-auth-key',
       },
 
       typescript: {
@@ -102,6 +104,12 @@ export default defineConfig((ctx) => {
     devServer: {
       // https: true,
       open: true, // opens browser window automatically
+      proxy: {
+        '/web': {
+          target: 'http://127.0.0.1:18790',
+          changeOrigin: true,
+        },
+      },
     },
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#framework
@@ -119,7 +127,7 @@ export default defineConfig((ctx) => {
       // directives: [],
 
       // Quasar plugins
-      plugins: [],
+      plugins: ['Notify'],
     },
 
     // animations: 'all', // --- includes all animations

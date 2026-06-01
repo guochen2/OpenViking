@@ -22,6 +22,7 @@ class ChannelType(str, Enum):
     QQ = "qq"
     OPENAPI = "openapi"
     BOT_API = "bot_api"
+    WEB_HTTP = "web_http"
 
 
 class SandboxBackend(str, Enum):
@@ -281,6 +282,20 @@ class OpenAPIChannelConfig(BaseChannelConfig):
         return self._channel_id
 
 
+class HttpWebChannelConfig(BaseChannelConfig):
+    """HTTP Web SSE channel for external web clients."""
+
+    type: ChannelType = ChannelType.WEB_HTTP
+    enabled: bool = True
+    auth_key: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+    max_concurrent_requests: int = 100
+    id: str = "default"
+
+    def channel_id(self) -> str:
+        return self.id
+
+
 class BotChannelConfig(BaseChannelConfig):
     """Bot channel configuration for multi-channel support."""
 
@@ -399,6 +414,8 @@ class ChannelsConfig(BaseModel):
             return OpenAPIChannelConfig(**config)
         elif channel_type == ChannelType.BOT_API:
             return BotChannelConfig(**config)
+        elif channel_type == ChannelType.WEB_HTTP:
+            return HttpWebChannelConfig(**config)
         else:
             return BaseChannelConfig(**config)
 

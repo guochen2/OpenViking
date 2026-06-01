@@ -310,11 +310,19 @@ def gateway(
 
     # Create FastAPI app for OpenAPI
     from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
 
     fastapi_app = FastAPI(
         title="Vikingbot OpenAPI",
         description="HTTP API for Vikingbot chat",
         version="1.0.0",
+    )
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     cron = prepare_cron(bus)
@@ -469,6 +477,23 @@ Reminder message to deliver:
     return cron
 
 
+def _find_web_http_configs(config) -> list:
+    """Return enabled HttpWebChannelConfig entries from config."""
+    from vikingbot.config.schema import ChannelType, HttpWebChannelConfig
+
+    result = []
+    channels_config = getattr(config, "channels_config", None)
+    if channels_config is None:
+        return result
+    for ch_config in channels_config.get_all_channels():
+        if isinstance(ch_config, HttpWebChannelConfig) or (
+            hasattr(ch_config, "type") and getattr(ch_config, "type", None) == ChannelType.WEB_HTTP
+        ):
+            if ch_config.enabled:
+                result.append(ch_config)
+    return result
+
+
 def prepare_channel(
     config, bus, fastapi_app=None, enable_openapi: bool = False, openapi_port: int = 18790
 ):
@@ -499,6 +524,21 @@ def prepare_channel(
         )
         channels.add_channel(openapi_channel)
         logger.info(f"OpenAPI channel enabled on port {openapi_port}")
+
+        for web_http_config in _find_web_http_configs(config):
+            from vikingbot.channels.http_web import HttpWebChannel
+
+            http_web_channel = HttpWebChannel(
+                web_http_config,
+                bus,
+                workspace_path=config.workspace_path,
+                app=fastapi_app,
+                global_config=config,
+            )
+            channels.add_channel(http_web_channel)
+            logger.info(
+                f"HTTP Web SSE channel enabled at /web/v1 (id={web_http_config.channel_id()})"
+            )
 
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
