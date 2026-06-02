@@ -2,6 +2,7 @@ import type { AxiosResponse } from 'axios';
 import { chatAuthKey, chatHttp } from 'src/services/http';
 import type { HttpStreamDonePayload, HttpStreamEventPayload } from 'src/types/chat';
 
+
 export interface StreamChatOptions {
   message: string;
   userId: string;
@@ -47,15 +48,12 @@ async function readSseStream(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+      buffer = decoder.decode(value, { stream: true });
       const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
-
+      // buffer = blocks.pop() ?? '';
       for (const block of blocks) {
         const payload = parseSseBlock(block);
         if (!payload) continue;
-
         if (isDonePayload(payload)) {
           options.onDone(payload);
         } else {
@@ -88,7 +86,7 @@ function getReadableStreamFromAxiosResponse(response: AxiosResponse): ReadableSt
 export async function streamChat(options: StreamChatOptions): Promise<void> {
   try {
     const response = await chatHttp.post(
-      '/web/v1/chat/stream',
+      '/api/chat/stream',
       {
         message: options.message,
         user_id: options.userId,
@@ -104,7 +102,6 @@ export async function streamChat(options: StreamChatOptions): Promise<void> {
         signal: options.signal,
       } as any,
     );
-
     const stream = getReadableStreamFromAxiosResponse(response);
     await readSseStream(stream, options);
   } catch (error) {
