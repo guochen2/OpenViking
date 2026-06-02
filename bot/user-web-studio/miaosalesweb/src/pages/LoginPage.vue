@@ -47,10 +47,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useQuasar } from 'quasar';
 import { useAuthStore } from 'stores/auth-store';
 import { useChatStore } from 'stores/chat-store';
 
 const router = useRouter();
+const $q = useQuasar();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 
@@ -63,8 +65,13 @@ async function onSubmit() {
   loading.value = true;
   try {
     authStore.login(username.value, password.value);
-    chatStore.initForUser();
+    await chatStore.initForUser();
     await router.push('/chat');
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error instanceof Error ? error.message : '初始化失败',
+    });
   } finally {
     loading.value = false;
   }

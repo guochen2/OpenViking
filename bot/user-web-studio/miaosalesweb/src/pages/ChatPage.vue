@@ -18,7 +18,8 @@
           label="新建会话"
           class="full-width"
           unelevated
-          :disable="chatStore.hasExecutingSession"
+          :loading="chatStore.creatingSession"
+          :disable="chatStore.hasExecutingSession || chatStore.creatingSession"
           @click="onCreateSession"
         />
         <div v-if="chatStore.hasExecutingSession" class="text-caption text-orange q-mt-sm">
@@ -177,7 +178,12 @@ const canSend = computed(
     !!chatStore.activeSessionId
 );
 
-chatStore.initForUser();
+void chatStore.initForUser().catch((error: unknown) => {
+  $q.notify({
+    type: 'negative',
+    message: error instanceof Error ? error.message : '初始化会话失败',
+  });
+});
 
 watch(
   () => chatStore.activeMessages.length,
@@ -221,12 +227,26 @@ function formatEventData(data: unknown): string {
   }
 }
 
-function onCreateSession() {
-  const session = chatStore.createSession();
-  if (!session) {
+async function onCreateSession() {
+  if (chatStore.hasExecutingSession) {
     $q.notify({
       type: 'warning',
       message: '请等待当前会话执行完成后再新建',
+    });
+    return;
+  }
+  try {
+    const session = await chatStore.createSession();
+    if (!session) {
+      $q.notify({
+        type: 'warning',
+        message: '无法创建会话，请稍后重试',
+      });
+    }
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error instanceof Error ? error.message : '创建会话失败',
     });
   }
 }

@@ -1,7 +1,6 @@
+import type { AxiosResponse } from 'axios';
+import { chatAuthKey, chatHttp } from 'src/services/http';
 import type { HttpStreamDonePayload, HttpStreamEventPayload } from 'src/types/chat';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
-const AUTH_KEY = import.meta.env.VITE_AUTH_KEY ?? 'dev-auth-key';
 
 export interface StreamChatOptions {
   message: string;
@@ -36,59 +35,81 @@ function isDonePayload(
   return payload.phase === 'completed' && 'content' in payload && !('event' in payload);
 }
 
-export async function streamChat(options: StreamChatOptions): Promise<void> {
-  const url = `${API_BASE}/web/v1/chat/stream`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'auth-key': AUTH_KEY,
-    },
-    body: JSON.stringify({
-      message: options.message,
-      user_id: options.userId,
-      session_id: options.sessionId,
-    }),
-    signal: options.signal,
-  } as any);
-
-  if (!response.ok) {
-    let detail = response.statusText;
-    try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      // ignore parse errors
-    }
-    throw new Error(detail || `HTTP ${response.status}`);
-  }
-
-  if (!response.body) {
-    throw new Error('Empty response body');
-  }
-
-  const reader = response.body.getReader();
+async function readSseStream(
+  stream: ReadableStream<Uint8Array>,
+  options: StreamChatOptions,
+): Promise<void> {
+  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split('\n\n');
-    buffer = blocks.pop() ?? '';
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
 
-    for (const block of blocks) {
-      const payload = parseSseBlock(block);
-      if (!payload) continue;
+      for (const block of blocks) {
+        const payload = parseSseBlock(block);
+        if (!payload) continue;
 
-      if (isDonePayload(payload)) {
-        options.onDone(payload);
-      } else {
-        options.onEvent(payload);
+        if (isDonePayload(payload)) {
+          options.onDone(payload);
+        } else {
+          options.onEvent(payload);
+        }
       }
     }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
+    const err = error instanceof Error ? error : new Error('SSE 读取失败');
+    options.onError(err);
+    throw err;
+  }
+}
+
+function getReadableStreamFromAxiosResponse(response: AxiosResponse): ReadableStream<Uint8Array> {
+  const body = response.data;
+  if (body instanceof ReadableStream) {
+    return body;
+  }
+  if (body && typeof body === 'object' && 'getReader' in body) {
+    return body as ReadableStream<Uint8Array>;
+  }
+  throw new Error('SSE 流不可用');
+}
+
+/** 通过 axios（fetch 适配器）发起 SSE 对话请求 */
+export async function streamChat(options: StreamChatOptions): Promise<void> {
+  try {
+    const response = await chatHttp.post(
+      '/web/v1/chat/stream',
+      {
+        message: options.message,
+        user_id: options.userId,
+        session_id: options.sessionId,
+      },
+      {
+        headers: {
+          Accept: 'text/event-stream',
+          'auth-key': chatAuthKey,
+        },
+        responseType: 'stream',
+        adapter: 'fetch',
+        signal: options.signal,
+      } as any,
+    );
+
+    const stream = getReadableStreamFromAxiosResponse(response);
+    await readSseStream(stream, options);
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error('对话请求失败');
+    options.onError(err);
+    throw err;
   }
 }

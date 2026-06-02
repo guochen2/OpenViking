@@ -40,7 +40,9 @@ export default defineConfig((ctx) => {
       env: {
         // 全局可用
         APP_VERSION: pkg.version,
-        VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? '',
+        VITE_SESSION_API_BASE_URL: process.env.VITE_SESSION_API_BASE_URL ?? '',
+        VITE_CHAT_API_BASE_URL:
+          process.env.VITE_CHAT_API_BASE_URL ?? process.env.VITE_API_BASE_URL ?? '',
         VITE_AUTH_KEY: process.env.VITE_AUTH_KEY ?? 'dev-auth-key',
       },
 
@@ -105,8 +107,12 @@ export default defineConfig((ctx) => {
       // https: true,
       open: true, // opens browser window automatically
       proxy: {
+        '/api': {
+          target: process.env.VITE_SESSION_API_PROXY_TARGET ?? 'http://127.0.0.1:5200',
+          changeOrigin: true,
+        },
         '/web': {
-          target: 'http://127.0.0.1:18790',
+          target: process.env.VITE_CHAT_API_PROXY_TARGET ?? 'http://127.0.0.1:18790',
           changeOrigin: true,
         },
       },

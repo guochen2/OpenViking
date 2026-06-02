@@ -527,6 +527,20 @@ class WebSearchConfig(BaseModel):
     max_results: int = 5
 
 
+class ResourceAccessConfig(BaseModel):
+    """Third-party resource access control for OpenViking tools."""
+
+    enabled: bool = False
+    api_url: str = ""
+    session_key_param: str = "sessionkey"
+    timeout_seconds: float = 10.0
+    cache_ttl_seconds: int = 300
+    auth_header: str = ""
+    auth_token: str = ""
+    deny_on_error: bool = True
+    search_overfetch_multiplier: int = 3
+
+
 class OpenVikingConfig(BaseModel):
     """Viking tools configuration."""
 
@@ -713,6 +727,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     ov_server: OpenVikingConfig = Field(default_factory=OpenVikingConfig)
+    resource_access: ResourceAccessConfig = Field(default_factory=ResourceAccessConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)

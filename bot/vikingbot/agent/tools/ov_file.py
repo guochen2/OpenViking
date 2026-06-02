@@ -10,7 +10,9 @@ import httpx
 from loguru import logger
 
 from vikingbot.agent.tools.base import Tool, ToolContext
+from vikingbot.agent.tools.resource_access_guard import ResourceAccessGuard
 from vikingbot.openviking_mount.ov_server import VikingClient
+from vikingbot.openviking_mount.resource_access import should_filter_uri
 
 
 class OVFileTool(Tool, ABC):
@@ -47,24 +49,30 @@ class VikingListTool(OVFileTool):
                 "recursive": {
                     "type": "boolean",
                     "description": "Whether to list recursively",
-                    "default": False,
+                    "default": True,
                 },
             },
             "required": ["uri"],
         }
 
     async def execute(
-        self, tool_context: "ToolContext", uri: str, recursive: bool = False, **kwargs: Any
+        self, tool_context: "ToolContext", uri: str, recursive: bool = True, **kwargs: Any
     ) -> str:
         try:
+            logger.info(f'Listing Viking resources at {uri} with recursive={recursive}')
+            access = await ResourceAccessGuard.from_context(tool_context)
+            # if access.enabled and not access.list_scope_allowed(uri):
+                # return access.deny_message()
+
             client = await self._get_client(tool_context)
             entries = await client.list_resources(path=uri, recursive=recursive)
+            entries = access.filter_ls(entries)
 
             if not entries:
                 return f"No resources found at {uri}"
 
             result = []
-            for entry in entries:
+            for entry in entries[:1000]:
                 item = {
                     "name": entry["name"],
                     "size": entry["size"],
@@ -249,8 +257,11 @@ class VikingSearchTool(OVFileTool):
         **kwargs: Any,
     ) -> str:
         try:
+            logger.info(f'Searching Viking with query="{query}", target_uri="{target_uri}", min_score={min_score}')
+            access = await ResourceAccessGuard.from_context(tool_context)
             client = await self._get_client(tool_context)
             admin_user_id = client.admin_user_id
+            base_limit = 20
 
             if not target_uri and tool_context.memory_user_ids:
                 user_ids = tool_context.memory_user_ids if client.should_sender_fanout() else [None]
@@ -276,10 +287,15 @@ class VikingSearchTool(OVFileTool):
                     return f"No results found for query: {query}"
                 return self._format_search_items_json(grouped_items, min_score=min_score)
 
+            resolved_target = access.resolve_search_target(target_uri)
+            if access.enabled and resolved_target is None:
+                return access.deny_message()
+
+            fetch_limit = access.search_fetch_limit(base_limit)
             results = await client.search(
                 query,
-                target_uri=target_uri,
-                limit=20,
+                target_uri=resolved_target if resolved_target is not None else target_uri,
+                limit=fetch_limit,
                 user_id=admin_user_id,
             )
 
@@ -287,6 +303,9 @@ class VikingSearchTool(OVFileTool):
                 return f"No results found for query: {query}"
 
             grouped_items = self._filter_search_items(results, min_score=min_score)
+            grouped_items = access.filter_grouped_search(grouped_items)
+            if access.enabled:
+                grouped_items = access.trim_grouped_to_limit(grouped_items, base_limit)
             total = sum(len(items) for items in grouped_items.values())
             if total == 0:
                 return f"No results found for query: {query}"
@@ -328,6 +347,7 @@ class VikingAddResourceTool(OVFileTool):
     ) -> str:
         client = None
         try:
+            logger.info(f'Adding resource to Viking with path="{path}", description="{description}"')
             if path and not path.startswith("http"):
                 local_path = Path(path).expanduser().resolve()
                 if not local_path.exists():
@@ -373,13 +393,14 @@ class VikingGrepTool(OVFileTool):
         return {
             "type": "object",
             "properties": {
-                "uri": {
-                    "type": "string",
-                    "description": "The whole Viking URI to search within (e.g., viking://resources/)",
-                },
                 "pattern": {
                     "type": "string",
                     "description": "Regex pattern to search for",
+                },
+                "uri": {
+                    "type": "string",
+                    "description": "The whole Viking URI to search within (e.g., viking://resources/path/)",
+                    "default": "",
                 },
                 "case_insensitive": {
                     "type": "boolean",
@@ -387,34 +408,51 @@ class VikingGrepTool(OVFileTool):
                     "default": False,
                 },
             },
-            "required": ["uri", "pattern"],
+            "required": ["pattern"],
         }
 
     async def execute(
         self,
         tool_context: "ToolContext",
-        uri: str,
         pattern: str,
+        uri: str = "",
         case_insensitive: bool = False,
         **kwargs: Any,
     ) -> str:
+        logger.info(f'Searching Viking Grep with pattern="{pattern}", uri="{uri}", case_insensitive={case_insensitive}')
         try:
+            access = await ResourceAccessGuard.from_context(tool_context)
+            if uri:
+                denied = access.ensure_uri_allowed(uri)
+                if denied:
+                    return denied
+
             client = await self._get_client(tool_context)
-            result = await client.grep(
-                uri,
-                pattern,
-                case_insensitive=case_insensitive,
-                user_id=client.admin_user_id,
-            )
-            if isinstance(result, dict):
-                matches = result.get("matches", [])
+            search_roots: list[str | None]
+            if access.enabled and not uri:
+                search_roots = access.allowed_uris or [None]
             else:
-                matches = getattr(result, "matches", [])
+                search_roots = [uri or None]
+
+            matches: list[Any] = []
+            for root in search_roots:
+                result = await client.grep(
+                    root or "viking://resources/",
+                    pattern,
+                    case_insensitive=case_insensitive,
+                    user_id=client.admin_user_id,
+                    node_limit=1000
+                )
+                if isinstance(result, dict):
+                    matches.extend(result.get("matches", []))
+                else:
+                    matches.extend(getattr(result, "matches", []))
 
             if not matches:
                 return f"No matches found for pattern: '{pattern}'"
 
             merged_results: dict[str, list[tuple[int, str]]] = {}
+            visible_count = 0
 
             for match in matches:
                 if isinstance(match, dict):
@@ -426,12 +464,21 @@ class VikingGrepTool(OVFileTool):
                     line = getattr(match, "line", "?")
                     content = getattr(match, "content", "")
 
+                if access.enabled and not should_filter_uri(str(match_uri), access.allowed_uris):
+                    continue
+
+                visible_count += 1
                 if match_uri not in merged_results:
                     merged_results[match_uri] = []
                 merged_results[match_uri].append((line, content))
+                if len(merged_results) >= 10:
+                    break
+
+            if not merged_results:
+                return f"No matches found for pattern: '{pattern}'"
 
             result_lines = [
-                f"Found {len(matches)} match{'es' if len(matches) != 1 else ''} for pattern '{pattern}':"
+                f"Found {visible_count} match{'es' if visible_count != 1 else ''} for pattern '{pattern}':"
             ]
 
             for match_uri, uri_matches in merged_results.items():
@@ -482,23 +529,48 @@ class VikingGlobTool(OVFileTool):
         self, tool_context: "ToolContext", pattern: str, uri: str = "", **kwargs: Any
     ) -> str:
         try:
-            client = await self._get_client(tool_context)
-            result = await client.glob(pattern, uri=uri or None, user_id=client.admin_user_id)
+            logger.info(f'Searching Viking Glob with pattern="{pattern}", uri="{uri}"')
+            access = await ResourceAccessGuard.from_context(tool_context)
+            if uri:
+                denied = access.ensure_uri_allowed(uri)
+                if denied:
+                    return denied
 
-            if isinstance(result, dict):
-                matches = result.get("matches", [])
-                count = result.get("count", 0)
+            client = await self._get_client(tool_context)
+            search_roots: list[str | None]
+            if access.enabled and not uri:
+                search_roots = access.allowed_uris or [None]
             else:
-                matches = getattr(result, "matches", [])
-                count = getattr(result, "count", 0)
+                search_roots = [uri or None]
+
+            matches: list[Any] = []
+            for root in search_roots:
+                result = await client.glob(pattern, uri=root, user_id=client.admin_user_id, node_limit=1000)
+                if isinstance(result, dict):
+                    matches.extend(result.get("matches", []))
+                else:
+                    matches.extend(getattr(result, "matches", []))
 
             if not matches:
                 return f"No files found for pattern: {pattern}"
 
-            result_lines = [f"Found {count} file{'s' if count != 1 else ''}:"]
+            visible_matches: list[str] = []
             for match_uri in matches:
                 if isinstance(match_uri, dict):
                     match_uri = match_uri.get("uri", str(match_uri))
+                if access.enabled and not should_filter_uri(str(match_uri), access.allowed_uris):
+                    continue
+                visible_matches.append(str(match_uri))
+                if len(visible_matches) >= 10:
+                    break
+
+            if not visible_matches:
+                return f"No files found for pattern: {pattern}"
+
+            result_lines = [
+                f"Found {len(visible_matches)} file{'s' if len(visible_matches) != 1 else ''}:"
+            ]
+            for match_uri in visible_matches:
                 result_lines.append(f"📄 {match_uri}")
 
             return "\n".join(result_lines)
@@ -545,6 +617,7 @@ class VikingMemoryCommitTool(OVFileTool):
         **kwargs: Any,
     ) -> str:
         try:
+            logger.info(f'Committing messages to Viking memory: {messages}')
             if not tool_context.sender_id:
                 return "Error committed, sender_id is required."
             client = await self._get_client(tool_context)
@@ -589,8 +662,14 @@ class VikingMultiReadTool(OVFileTool):
     ) -> str:
         level = "read"  # 默认获取完整内容
         try:
+            logger.info(f'Multi-reading Viking resources: {uris}')
             if not uris:
                 return "Error: No URIs provided."
+
+            access = await ResourceAccessGuard.from_context(tool_context)
+            allowed_uris, denied_uris = access.filter_uris(uris)
+            if access.enabled and not allowed_uris:
+                return access.deny_message()
 
             client = await self._get_client(tool_context)
             max_concurrent = 10
@@ -613,12 +692,16 @@ class VikingMultiReadTool(OVFileTool):
                             "success": False,
                         }
 
-            # 并发读取所有URI
-            read_tasks = [read_single_uri(uri) for uri in uris]
+            read_tasks = [read_single_uri(uri) for uri in allowed_uris]
             results = await asyncio.gather(*read_tasks)
 
-            # 构建结果
-            result_lines = [f"Multi-read results for {len(uris)} resources (level: {level}):"]
+            result_lines = [
+                f"Multi-read results for {len(allowed_uris)} resources (level: {level}):"
+            ]
+            for denied_uri in denied_uris:
+                result_lines.append(f"\n--- START OF {denied_uri} ---")
+                result_lines.append(f"ERROR: {access.deny_message()}")
+                result_lines.append(f"--- END OF {denied_uri} ---")
 
             for result in results:
                 uri = result["uri"]

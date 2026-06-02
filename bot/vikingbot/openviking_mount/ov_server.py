@@ -201,7 +201,7 @@ class VikingClient:
         """列出资源"""
         if path is None or path == "":
             path = viking_resource_prefix
-        entries = await self.client.ls(path, recursive=recursive)
+        entries = await self.client.ls(path, recursive=recursive,node_limit=100000)
         return entries
 
     async def read_content(self, uri: str, level: str = "abstract") -> str:

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { streamChat } from 'src/services/chat-api';
+import { fetchSessionId } from 'src/services/session-api';
 import type {
   ChatMessage,
   ChatSession,
@@ -39,6 +40,7 @@ export const useChatStore = defineStore('chat', () => {
   const messagesBySession = ref<Record<string, ChatMessage[]>>(loadJson(MESSAGES_KEY, {}));
   const activeSessionId = ref<string>('');
   const abortController = ref<AbortController | null>(null);
+  const creatingSession = ref(false);
 
   const sessions = computed(() => sessionsByUser.value[authStore.userId] ?? []);
 
@@ -80,24 +82,30 @@ export const useChatStore = defineStore('chat', () => {
     persistSessions();
   }
 
-  function createSession(): ChatSession | null {
-    if (hasExecutingSession.value) return null;
+  async function createSession(): Promise<ChatSession | null> {
+    if (hasExecutingSession.value || creatingSession.value) return null;
 
-    const now = new Date().toISOString();
-    const session: ChatSession = {
-      id: createId(),
-      title: '新会话',
-      createdAt: now,
-      updatedAt: now,
-      status: 'completed',
-    };
+    creatingSession.value = true;
+    try {
+      const sessionId = await fetchSessionId(authStore.userId);
+      const now = new Date().toISOString();
+      const session: ChatSession = {
+        id: sessionId,
+        title: '新会话',
+        createdAt: now,
+        updatedAt: now,
+        status: 'completed',
+      };
 
-    ensureUserSessions().unshift(session);
-    messagesBySession.value[session.id] = [];
-    activeSessionId.value = session.id;
-    persistSessions();
-    persistMessages();
-    return session;
+      ensureUserSessions().unshift(session);
+      messagesBySession.value[session.id] = [];
+      activeSessionId.value = session.id;
+      persistSessions();
+      persistMessages();
+      return session;
+    } finally {
+      creatingSession.value = false;
+    }
   }
 
   function selectSession(sessionId: string) {
@@ -240,10 +248,10 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function initForUser() {
+  async function initForUser(): Promise<void> {
     const list = ensureUserSessions();
     if (list.length === 0) {
-      createSession();
+      await createSession();
       return;
     }
     if (!activeSessionId.value || !list.some((item) => item.id === activeSessionId.value)) {
@@ -258,6 +266,7 @@ export const useChatStore = defineStore('chat', () => {
     activeMessages,
     isExecuting,
     hasExecutingSession,
+    creatingSession,
     createSession,
     selectSession,
     sendMessage,
