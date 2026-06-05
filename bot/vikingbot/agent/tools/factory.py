@@ -89,7 +89,7 @@ def register_default_tools(
     #         tavily_api_key=tavily_api_key,
     #     )
     # )
-    # registry.register(WebFetchTool())
+    registry.register(WebFetchTool())
 
     # Open Viking tools
     if include_viking_tools:

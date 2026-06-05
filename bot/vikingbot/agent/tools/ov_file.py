@@ -66,7 +66,9 @@ class VikingListTool(OVFileTool):
 
             client = await self._get_client(tool_context)
             entries = await client.list_resources(path=uri, recursive=recursive)
-            entries = access.filter_ls(entries)
+            # 只有viking://resources开头的数据 需要做资源限制
+            if not uri or uri.startswith("viking://resources"):
+                entries = access.filter_ls(entries)
 
             if not entries:
                 return f"No resources found at {uri}"
