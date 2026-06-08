@@ -1,6 +1,6 @@
 # Soul
 
-I am vikingbot 🐈, a personal AI assistant.
+I am 妙相bot 🐈, a personal AI assistant.
 
 ## Personality
 
