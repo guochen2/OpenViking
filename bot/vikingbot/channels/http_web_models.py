@@ -35,7 +35,17 @@ class HttpChatRequest(BaseModel):
     user_id: str = Field(..., description="User identifier", min_length=1)
     session_id: str = Field(..., description="Session identifier", min_length=1)
 
-
+class HttpChatStepRequest(BaseModel):
+    """Execution step record model"""
+    task_id: Optional[str] = Field(None, description="Unique task identifier")
+    stage: str = Field(..., description="Current execution stage")
+    status: str = Field("running", description="Status of the current step")
+    message: str = Field("", description="Step description message")
+    payload: Optional[Any] = Field(None, description="Additional business payload data")
+    timestamp: str = Field(..., description="ISO formatted timestamp")
+    session_id: str = Field(..., description="Unique session identifier")
+    
+    
 class HttpStreamEvent(BaseModel):
     """Single SSE event describing conversation progress."""
 

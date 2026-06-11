@@ -109,6 +109,9 @@ class MCPToolWrapper(Tool):
         from mcp import types
 
         try:
+            # 自定义哪些mcp要传特殊的数据  用于数据链路追踪
+            if self._original_name=='ask_excel':
+                kwargs['sender_id'] = tool_context.sender_id
             result = await asyncio.wait_for(
                 self._session.call_tool(self._original_name, arguments=kwargs),
                 timeout=self._tool_timeout,

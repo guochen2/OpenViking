@@ -6,16 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from vikingbot.bus.events import OutboundEventType, OutboundMessage
 from vikingbot.bus.queue import MessageBus
 from vikingbot.channels.base import BaseChannel
+from bot.vikingbot.utils.trace import TRACE_HEADER, get_trace_id, set_trace_id
 from vikingbot.channels.http_web_models import (
     ConversationPhase,
     HttpChatRequest,
+    HttpChatStepRequest,
     HttpStreamDone,
     HttpStreamEvent,
     StreamEventType,
@@ -83,7 +85,12 @@ class HttpWebChannelConfig(BaseChannelConfig):
     def channel_id(self) -> str:
         return self.id
 
-
+async def get_trace_id_header(raw_req: Request) -> Optional[str]:
+    trace_id = raw_req.headers.get(TRACE_HEADER) or raw_req.headers.get("Trace-Id")
+    # 自动设置到异步上下文
+    if trace_id:
+        set_trace_id(trace_id)
+    return trace_id
 class HttpWebChannel(BaseChannel):
     """SSE-only HTTP channel for external web applications."""
 
@@ -187,9 +194,42 @@ class HttpWebChannel(BaseChannel):
         async def chat_stream(
             request: HttpChatRequest,
             authorized: bool = Depends(verify_auth_key),
+            _: None = Depends(get_trace_id_header)
         ):
             return await channel._handle_chat_stream(request)
+        
+        @router.post("/chat/step")
+        async def chat_step(request: HttpChatStepRequest,_: None = Depends(get_trace_id_header)):
+            # 1. 校验会话ID
+            session_id = request.session_id
+            if not session_id:
+                return
 
+            # 2. 获取会话实例，不存在则直接返回
+            pending = self._pending.get(session_id)
+            if not pending:
+                return
+
+            # 3. 状态 -> 阶段+事件 映射（仿照原 event_map 写法）
+            status_event_map = {
+                "running": (ConversationPhase.PROCESSING, StreamEventType.TOOL_RESULT),
+                "success": (ConversationPhase.RESPONDING, StreamEventType.TOOL_RESULT),
+                "failed": (ConversationPhase.ERROR, StreamEventType.TOOL_RESULT),
+            }
+
+            # 4. 匹配状态并推送事件
+            if request.status in status_event_map:
+                phase, event = status_event_map[request.status]
+                # 组装推送内容，按需拼接 message / payload / task_id 等
+                content = {
+                    "task_id": request.task_id,
+                    "stage": request.stage,
+                    "message": request.message,
+                    "payload": request.payload,
+                    "timestamp": request.timestamp
+                }
+                await pending.emit(phase, event, content)
+            return
         return router
 
     async def _handle_chat_stream(self, request: HttpChatRequest) -> StreamingResponse:
@@ -221,8 +261,8 @@ class HttpWebChannel(BaseChannel):
 
                 msg = InboundMessage(
                     session_key=session_key,
-                    sender_id=user_id,
-                    content=request.message,
+                    sender_id=get_trace_id(),
+                    content=request.message
                 )
                 await self.bus.publish_inbound(msg)
 
